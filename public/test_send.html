@@ -182,7 +182,30 @@
         }
 
         function generateId() {
-            return Math.random().toString(36).substring(2, 15);
+            // Fun words for memorable links
+            const adjectives = [
+                'cosmic', 'stellar', 'quantum', 'blazing', 'electric', 'magical', 'neon', 'turbo',
+                'super', 'mega', 'ultra', 'hyper', 'epic', 'awesome', 'radical', 'fantastic',
+                'incredible', 'amazing', 'spectacular', 'phenomenal', 'brilliant', 'dazzling',
+                'sparkling', 'glowing', 'shimmering', 'gleaming', 'luminous', 'radiant',
+                'vibrant', 'dynamic', 'energetic', 'powerful', 'mighty', 'fierce', 'bold',
+                'brave', 'fearless', 'swift', 'rapid', 'quick', 'speedy', 'fast', 'zippy'
+            ];
+
+            const nouns = [
+                'rocket', 'comet', 'star', 'galaxy', 'nebula', 'unicorn', 'dragon', 'phoenix',
+                'tiger', 'eagle', 'falcon', 'cheetah', 'panther', 'wolf', 'bear', 'shark',
+                'dolphin', 'whale', 'octopus', 'butterfly', 'firefly', 'crystal', 'diamond',
+                'ruby', 'emerald', 'sapphire', 'thunder', 'lightning', 'storm', 'blizzard',
+                'volcano', 'mountain', 'ocean', 'river', 'forest', 'jungle', 'desert', 'island',
+                'castle', 'tower', 'bridge', 'portal', 'gateway', 'vortex', 'spiral', 'wave'
+            ];
+
+            const randomAdjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+            const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+            const randomNumber = Math.floor(Math.random() * 999) + 1;
+
+            return `${randomAdjective}-${randomNoun}-${randomNumber}`;
         }
 
         function updateStatus(status) {
