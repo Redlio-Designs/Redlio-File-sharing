@@ -423,8 +423,13 @@
             dc.send(JSON.stringify(manifest));
 
             // flow control
-            const chunkSize = 64 * 1024;
-            const low = 512 * 1024;
+            // High-water mark keeps the SCTP send buffer full for max throughput;
+            // we only pause (await drain) when buffered data exceeds `high`, and
+            // resume via the bufferedamountlow event at `low`. Event-driven, so it
+            // is unaffected by background-tab timer throttling.
+            const chunkSize = 64 * 1024;     // 64 KiB — safe SCTP message size
+            const low = 1 * 1024 * 1024;     // resume sending at 1 MiB buffered
+            const high = 8 * 1024 * 1024;    // pause sending above 8 MiB buffered
             dc.bufferedAmountLowThreshold = low;
 
             // 2) send each file with start/end markers
@@ -450,7 +455,7 @@
                     // Update overall progress
                     updateOverallProgress();
 
-                    if (dc.bufferedAmount > low) await waitForBufferLow();
+                    if (dc.bufferedAmount > high) await waitForBufferLow();
                 }
 
                 // Mark file as completed
@@ -503,17 +508,21 @@
             }, 2000);
         }
 
-        // Helper function for buffer flow control
+        // Helper function for buffer flow control.
+        // Uses the WebRTC 'bufferedamountlow' event instead of a setTimeout poll.
+        // Background tabs throttle setTimeout to >=1000ms, which stalls transfers;
+        // the event fires regardless of tab visibility.
         function waitForBufferLow() {
             return new Promise(resolve => {
-                const checkBuffer = () => {
-                    if (dc.bufferedAmount <= dc.bufferedAmountLowThreshold) {
-                        resolve();
-                    } else {
-                        setTimeout(checkBuffer, 10);
-                    }
+                if (dc.bufferedAmount <= dc.bufferedAmountLowThreshold) {
+                    resolve();
+                    return;
+                }
+                const onLow = () => {
+                    dc.removeEventListener('bufferedamountlow', onLow);
+                    resolve();
                 };
-                checkBuffer();
+                dc.addEventListener('bufferedamountlow', onLow);
             });
         }
         createLinkBtn.addEventListener('click', () => {
