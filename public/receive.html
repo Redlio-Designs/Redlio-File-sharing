@@ -157,6 +157,17 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Start gate: a user gesture is required to open the save-to-disk
+                     dialog, and it lets the user choose a download folder before the
+                     transfer begins. -->
+                <div class="mt-6">
+                    <button id="startBtn"
+                        class="w-full bg-primary-600 hover:bg-primary-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        Start Receiving
+                    </button>
+                    <p id="modeNote" class="text-xs text-slate-500 mt-2"></p>
+                </div>
             </div>
 
             <!-- Modern files table with enhanced styling -->
@@ -203,6 +214,7 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/rtc-config.js"></script>
     <script>
         const statusEl = document.getElementById('status');
         const statusIndicator = document.getElementById('statusIndicator');
@@ -212,6 +224,8 @@
         const totalBytesEl = document.getElementById('totalBytes');
         const filesTableWrap = document.getElementById('filesTableWrap');
         const filesTbody = document.getElementById('filesTbody');
+        const startBtn = document.getElementById('startBtn');
+        const modeNote = document.getElementById('modeNote');
 
         const params = new URLSearchParams(location.search);
         const linkId = params.get('id');
@@ -221,18 +235,50 @@
         let manifest = null;
         let filesMeta = []; // {name,size,type}
         let currentIndex = -1;
-        let fileBuffers = [];  // array of arrays of Uint8Array
         let fileReceived = []; // per-file received bytes
         let totalSize = 0, totalReceived = 0;
 
-        if (!linkId) setStatus('No link id in URL', 'error');
+        // Streaming-to-disk state (File System Access API). Avoids holding the
+        // whole file in memory, so multi-GB transfers no longer crash the tab.
+        let dirHandle = null;
+        let streamMode = false;
+        let writeChains = [];  // per-file promise chain: resolves to the active writable
+        // In-memory fallback (browsers without showDirectoryPicker)
+        let fileBuffers = [];  // array of arrays of Uint8Array
 
-        (async function main() {
+        const supportsFS = typeof window.showDirectoryPicker === 'function';
+        modeNote.textContent = supportsFS
+            ? 'Files stream straight to a folder you choose — handles very large files with low memory use.'
+            : 'This browser buffers files in memory; very large files may fail. Use Chrome or Edge for unlimited size.';
+
+        if (!linkId) {
+            setStatus('No link id in URL', 'error');
+            startBtn.disabled = true;
+        }
+
+        startBtn.addEventListener('click', async () => {
+            if (!linkId) return;
+            if (supportsFS) {
+                try {
+                    dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                    streamMode = true;
+                } catch (err) {
+                    // user dismissed the folder picker → fall back to in-memory mode
+                    streamMode = false;
+                }
+            }
+            startBtn.disabled = true;
+            startBtn.textContent = streamMode ? 'Receiving to disk…' : 'Receiving…';
+            connect();
+        });
+
+        function connect() {
             setStatus('Connecting to peer...', 'connecting');
             socket = io();
             socket.emit('join', { linkId, role: 'receiver' });
             socket.on('signal', async (payload) => {
                 if (payload.type === 'offer') {
+                    // handles both the initial offer and ICE-restart re-offers
                     await ensurePc();
                     await pc.setRemoteDescription(payload.sdp);
                     const answer = await pc.createAnswer();
@@ -242,16 +288,27 @@
                     try { await pc.addIceCandidate(payload.candidate); } catch { }
                 }
             });
-        })();
+        }
 
         async function ensurePc() {
             if (pc) return;
-            pc = new RTCPeerConnection({
-                iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
-            });
+            pc = new RTCPeerConnection(window.RTC_CONFIG);
             pc.onicecandidate = (e) => {
                 if (e.candidate) {
                     socket.emit('signal', { linkId, payload: { type: 'ice', candidate: e.candidate } });
+                }
+            };
+            pc.onconnectionstatechange = () => {
+                switch (pc.connectionState) {
+                    case 'connected':
+                        setStatus('Connected! Receiving files...', 'connected');
+                        break;
+                    case 'disconnected':
+                        setStatus('Connection unstable — waiting to recover...', 'connecting');
+                        break;
+                    case 'failed':
+                        setStatus('Connection failed — waiting for sender to reconnect...', 'error');
+                        break;
                 }
             };
             pc.ondatachannel = (e) => {
@@ -261,6 +318,12 @@
                 dc.onmessage = onData;
                 dc.onclose = () => setStatus('Connection closed', 'error');
             };
+        }
+
+        // Strip any path components a (possibly malicious) sender put in a name,
+        // so we never write outside the chosen folder.
+        function safeName(name) {
+            return (name || 'file').replace(/[\/\\]/g, '_').replace(/^\.+/, '_');
         }
 
         function onData(e) {
@@ -275,8 +338,9 @@
                         totalSize = filesMeta.reduce((s, f) => s + (f.size || 0), 0);
                         totalBytesEl.textContent = formatBytes(totalSize);
 
-                        fileBuffers = filesMeta.map(() => []);
                         fileReceived = filesMeta.map(() => 0);
+                        writeChains = filesMeta.map(() => null);
+                        fileBuffers = filesMeta.map(() => []);
 
                         filesTableWrap.style.display = 'block';
                         filesTbody.innerHTML = '';
@@ -309,12 +373,7 @@
                                     </div>
                                 </td>
                                 <td class="px-6 py-4">
-                                    <button disabled data-dl="${i}" class="inline-flex items-center px-3 py-2 border border-slate-300 shadow-sm text-sm leading-4 font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
-                                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                        </svg>
-                                        Download
-                                    </button>
+                                    <span data-action="${i}" class="text-sm text-slate-400">Waiting…</span>
                                 </td>`;
                             filesTbody.appendChild(tr);
                         });
@@ -322,28 +381,19 @@
                     }
                     if (msg && msg.type === 'start') {
                         currentIndex = msg.index;
+                        if (streamMode) startFileStream(msg.index);
                         return;
                     }
                     if (msg && msg.type === 'end') {
-                        const i = msg.index;
-                        const blob = new Blob(fileBuffers[i], { type: filesMeta[i].type || 'application/octet-stream' });
-                        const url = URL.createObjectURL(blob);
-                        const btn = document.querySelector(`button[data-dl="${i}"]`);
-                        if (btn) {
-                            btn.disabled = false;
-                            btn.className = 'inline-flex items-center px-3 py-2 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all';
-                            btn.onclick = () => {
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = filesMeta[i].name || `file_${i}`;
-                                a.click();
-                                setTimeout(() => URL.revokeObjectURL(url), 2000);
-                            };
-                        }
+                        finishFile(msg.index);
                         return;
                     }
                     if (msg && msg.type === 'all_done') {
                         setStatus('All files received successfully!', 'connected');
+                        // tell the sender exactly how many bytes we got per file
+                        if (dc && dc.readyState === 'open') {
+                            dc.send(JSON.stringify({ type: 'verify', files: fileReceived }));
+                        }
                         return;
                     }
                 } catch {
@@ -352,28 +402,85 @@
             }
 
             // binary chunk -> belongs to currentIndex
-            const ab = data instanceof ArrayBuffer ? data : (data && data.arrayBuffer ? data.arrayBuffer() : null);
-            if (!ab || currentIndex < 0) return;
+            if (!(data instanceof ArrayBuffer) || currentIndex < 0) return;
+            const i = currentIndex;
+            const chunk = new Uint8Array(data);
 
-            Promise.resolve(ab).then((buf) => {
-                const i = currentIndex;
-                fileBuffers[i].push(new Uint8Array(buf));
-                fileReceived[i] += buf.byteLength;
+            // progress (synchronous, independent of how the chunk is persisted)
+            fileReceived[i] += chunk.byteLength;
+            updateProgress(i);
 
-                const progressBar = document.querySelector(`div[data-idx="${i}"]`);
-                const size = filesMeta[i].size || 0;
-                const percentage = size ? Math.floor((fileReceived[i] / size) * 100) : 0;
-                if (progressBar) {
-                    progressBar.style.width = `${percentage}%`;
-                    const percentageText = progressBar.parentElement.nextElementSibling;
-                    if (percentageText) percentageText.textContent = `${percentage}%`;
+            if (streamMode) {
+                // serialize writes per file so disk I/O applies natural
+                // backpressure and chunks are never reordered or dropped
+                writeChains[i] = writeChains[i].then(writable => {
+                    return writable.write(chunk).then(() => writable);
+                });
+            } else {
+                fileBuffers[i].push(chunk);
+            }
+        }
+
+        function startFileStream(i) {
+            // create the on-disk file and a writable stream; the chain resolves
+            // to the writable so chunk writes queue safely behind creation
+            writeChains[i] = (async () => {
+                const fh = await dirHandle.getFileHandle(safeName(filesMeta[i].name), { create: true });
+                return await fh.createWritable();
+            })();
+            setAction(i, 'Saving to disk…', false);
+        }
+
+        function finishFile(i) {
+            if (streamMode) {
+                writeChains[i] = writeChains[i].then(async writable => {
+                    await writable.close();
+                    setAction(i, 'Saved ✓', false);
+                    return writable;
+                }).catch(() => setAction(i, 'Save failed', true));
+            } else {
+                // in-memory fallback: build a blob and expose a download button
+                const blob = new Blob(fileBuffers[i], { type: filesMeta[i].type || 'application/octet-stream' });
+                fileBuffers[i] = []; // release references
+                const url = URL.createObjectURL(blob);
+                const span = document.querySelector(`span[data-action="${i}"]`);
+                if (span) {
+                    const btn = document.createElement('button');
+                    btn.textContent = 'Download';
+                    btn.className = 'inline-flex items-center px-3 py-2 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 transition-all';
+                    btn.onclick = () => {
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filesMeta[i].name || `file_${i}`;
+                        a.click();
+                        setTimeout(() => URL.revokeObjectURL(url), 2000);
+                    };
+                    span.replaceWith(btn);
                 }
+            }
+        }
 
-                totalReceived = fileReceived.reduce((s, x) => s + x, 0);
-                gotBytesEl.textContent = formatBytes(totalReceived);
-                const overallP = totalSize ? Math.floor((totalReceived / totalSize) * 100) : 0;
-                progTotal.style.width = `${overallP}%`;
-            });
+        function updateProgress(i) {
+            const size = filesMeta[i].size || 0;
+            const percentage = size ? Math.floor((fileReceived[i] / size) * 100) : 0;
+            const progressBar = document.querySelector(`div[data-idx="${i}"]`);
+            if (progressBar) {
+                progressBar.style.width = `${percentage}%`;
+                const percentageText = progressBar.parentElement.nextElementSibling;
+                if (percentageText) percentageText.textContent = `${percentage}%`;
+            }
+            totalReceived = fileReceived.reduce((s, x) => s + x, 0);
+            gotBytesEl.textContent = formatBytes(totalReceived);
+            const overallP = totalSize ? Math.floor((totalReceived / totalSize) * 100) : 0;
+            progTotal.style.width = `${overallP}%`;
+        }
+
+        function setAction(i, text, isError) {
+            const span = document.querySelector(`span[data-action="${i}"]`);
+            if (span) {
+                span.textContent = text;
+                span.className = isError ? 'text-sm text-red-500' : 'text-sm text-green-600 font-medium';
+            }
         }
 
         function setStatus(s, type = 'idle') {

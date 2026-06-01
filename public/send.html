@@ -155,6 +155,7 @@
         </div>
     </div>
     <script src="/socket.io/socket.io.js"></script>
+    <script src="/rtc-config.js"></script>
     <script>
         // Global state
         let selectedFiles = [];
@@ -307,31 +308,6 @@
             filesTable.classList.remove('hidden');
         }
 
-        function simulateFileTransfer() {
-            // This function is kept for testing purposes but not used in real transfer
-            fileProgress.forEach((file, index) => {
-                let progress = 0;
-                const interval = setInterval(() => {
-                    progress += Math.random() * 15;
-                    if (progress >= 100) {
-                        progress = 100;
-                        clearInterval(interval);
-                        updateFileProgress(index, 100, 'completed');
-                    } else {
-                        updateFileProgress(index, progress, 'uploading');
-                    }
-
-                    // Update total progress
-                    const currentTotal = fileProgress.reduce((sum, f, i) => {
-                        const currentProgress = i === index ? progress : f.progress;
-                        return sum + (f.size * currentProgress) / 100;
-                    }, 0);
-                    totalSent = currentTotal;
-                    updateOverallProgress();
-                }, 200);
-            });
-        }
-
         // Event listeners
         dropZone.addEventListener('click', () => {
             fileInput.click();
@@ -384,13 +360,29 @@
             }
         });
 
+        let iceRestartTries = 0;
+
         async function startConnection() {
-            pc = new RTCPeerConnection({
-                iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }]
-            });
+            pc = new RTCPeerConnection(window.RTC_CONFIG);
             pc.onicecandidate = (e) => {
                 if (e.candidate) {
                     socket.emit('signal', { linkId, payload: { type: 'ice', candidate: e.candidate } });
+                }
+            };
+            // Connection-failure detection + automatic ICE restart so a transient
+            // network drop does not silently kill an in-progress transfer.
+            pc.onconnectionstatechange = () => {
+                switch (pc.connectionState) {
+                    case 'connected':
+                        iceRestartTries = 0;
+                        updateStatus('Connected — transferring securely');
+                        break;
+                    case 'disconnected':
+                        updateStatus('Connection unstable — trying to recover...');
+                        break;
+                    case 'failed':
+                        restartIce();
+                        break;
                 }
             };
             dc = pc.createDataChannel('file', { ordered: true });
@@ -402,10 +394,47 @@
             };
             dc.onclose = () => updateStatus('Connection closed');
             dc.onerror = (error) => updateStatus('Connection error');
+            // receiver sends back a 'verify' message with per-file byte counts
+            dc.onmessage = onReceiverMessage;
 
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             socket.emit('signal', { linkId, payload: { type: 'offer', sdp: offer } });
+        }
+
+        // Re-negotiate ICE without tearing down the data channel. The DataChannel
+        // is reliable+ordered, so an in-flight transfer resumes once a new path
+        // is found. Bounded retries avoid a tight failure loop.
+        async function restartIce() {
+            if (!pc || iceRestartTries >= 5) {
+                updateStatus('Connection failed — please create a new link and retry');
+                return;
+            }
+            iceRestartTries++;
+            updateStatus(`Connection failed — reconnecting (attempt ${iceRestartTries})...`);
+            try {
+                const offer = await pc.createOffer({ iceRestart: true });
+                await pc.setLocalDescription(offer);
+                socket.emit('signal', { linkId, payload: { type: 'offer', sdp: offer } });
+            } catch (err) {
+                updateStatus('Recovery failed — please create a new link and retry');
+            }
+        }
+
+        // Verify the receiver got every byte of every file (defense-in-depth on
+        // top of SCTP's own reliable, ordered, integrity-checked delivery).
+        function onReceiverMessage(e) {
+            if (typeof e.data !== 'string') return;
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'verify' && Array.isArray(msg.files)) {
+                    const ok = selectedFiles.length === msg.files.length &&
+                        selectedFiles.every((f, i) => msg.files[i] === f.size);
+                    updateStatus(ok
+                        ? 'All files received & verified ✓'
+                        : 'Warning: receiver byte counts do not match — transfer may be incomplete');
+                }
+            } catch { }
         }
         async function sendFiles() {
             // Track bytes sent per file
