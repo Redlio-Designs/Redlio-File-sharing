@@ -361,8 +361,20 @@
         });
 
         let iceRestartTries = 0;
+        // Incremented every time a new peer connection is started. The send
+        // loop captures the value at start and bails out if it changes, so a
+        // replaced connection can never leave a dead loop frozen mid-transfer.
+        let sendSession = 0;
 
         async function startConnection() {
+            // A repeat 'peer-joined' (receiver refreshed the page, or the link
+            // was opened a second time) replaces pc/dc. Tear the old session
+            // down explicitly so its handlers and send loop stop cleanly.
+            sendSession++;
+            iceRestartTries = 0;
+            if (dc) { try { dc.onclose = null; dc.close(); } catch { } }
+            if (pc) { try { pc.onconnectionstatechange = null; pc.close(); } catch { } }
+
             pc = new RTCPeerConnection(window.RTC_CONFIG);
             pc.onicecandidate = (e) => {
                 if (e.candidate) {
@@ -390,7 +402,9 @@
             dc.onopen = () => {
                 updateStatus('Connected! Starting file transfer...');
                 buttonText.textContent = 'Transferring Files';
-                sendFiles();
+                sendFiles().catch((err) => {
+                    updateStatus(`Error: transfer stopped — ${err && err.message ? err.message : 'connection lost'}`);
+                });
             };
             dc.onclose = () => updateStatus('Connection closed');
             dc.onerror = (error) => updateStatus('Connection error');
@@ -415,7 +429,9 @@
             try {
                 const offer = await pc.createOffer({ iceRestart: true });
                 await pc.setLocalDescription(offer);
-                socket.emit('signal', { linkId, payload: { type: 'offer', sdp: offer } });
+                // restart:true tells the receiver to reuse its existing pc;
+                // offers without it mean a brand-new connection
+                socket.emit('signal', { linkId, payload: { type: 'offer', sdp: offer, restart: true } });
             } catch (err) {
                 updateStatus('Recovery failed — please create a new link and retry');
             }
@@ -437,8 +453,16 @@
             } catch { }
         }
         async function sendFiles() {
+            // Bind this run to the current session and channel. If a new
+            // connection replaces them (receiver rejoined), this loop must
+            // stop instead of throwing on a dead/foreign channel.
+            const session = sendSession;
+            const channel = dc;
+            const aborted = () => session !== sendSession || channel.readyState !== 'open';
+
             // Track bytes sent per file
             let perFileSent = Array(selectedFiles.length).fill(0);
+            totalSent = 0;
 
             // Show progress elements
             overallProgress.classList.remove('hidden');
@@ -449,7 +473,7 @@
                 version: 1,
                 files: selectedFiles.map(f => ({ name: f.name, size: f.size, type: f.type }))
             };
-            dc.send(JSON.stringify(manifest));
+            channel.send(JSON.stringify(manifest));
 
             // flow control
             // High-water mark keeps the SCTP send buffer full for max throughput;
@@ -459,18 +483,24 @@
             const chunkSize = 64 * 1024;     // 64 KiB — safe SCTP message size
             const low = 1 * 1024 * 1024;     // resume sending at 1 MiB buffered
             const high = 8 * 1024 * 1024;    // pause sending above 8 MiB buffered
-            dc.bufferedAmountLowThreshold = low;
+            channel.bufferedAmountLowThreshold = low;
 
             // 2) send each file with start/end markers
             for (let i = 0; i < selectedFiles.length; i++) {
                 const f = selectedFiles[i];
                 updateFileProgress(i, 0, 'uploading');
-                dc.send(JSON.stringify({ type: 'start', index: i, name: f.name, size: f.size, fileType: f.type || 'application/octet-stream' }));
+                channel.send(JSON.stringify({ type: 'start', index: i, name: f.name, size: f.size, fileType: f.type || 'application/octet-stream' }));
 
                 let offset = 0;
                 while (offset < f.size) {
+                    if (aborted()) {
+                        updateFileProgress(i, fileProgress[i].progress, 'error');
+                        throw new Error(session !== sendSession
+                            ? 'connection was replaced (receiver reconnected)'
+                            : 'data channel closed');
+                    }
                     const slice = await f.slice(offset, offset + chunkSize).arrayBuffer();
-                    dc.send(slice);
+                    channel.send(slice);
                     offset += slice.byteLength;
 
                     // Update progress
@@ -484,22 +514,24 @@
                     // Update overall progress
                     updateOverallProgress();
 
-                    if (dc.bufferedAmount > high) await waitForBufferLow();
+                    if (channel.bufferedAmount > high) await waitForBufferLow(channel);
                 }
 
                 // Mark file as completed
                 updateFileProgress(i, 100, 'completed');
-                dc.send(JSON.stringify({ type: 'end', index: i }));
+                channel.send(JSON.stringify({ type: 'end', index: i }));
             }
 
             // 3) all done
-            dc.send(JSON.stringify({ type: 'all_done' }));
+            channel.send(JSON.stringify({ type: 'all_done' }));
             updateStatus('All files sent successfully!');
             buttonText.textContent = 'Transfer Complete';
 
-            // Add reset functionality
+            // Add reset functionality (once — repeat transfers must not stack buttons)
             setTimeout(() => {
+                if (document.getElementById('resetBtn')) return;
                 const resetBtn = document.createElement('button');
+                resetBtn.id = 'resetBtn';
                 resetBtn.textContent = 'Send More Files';
                 resetBtn.className = 'w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-medium py-3 px-6 rounded-lg transition-colors mt-4';
                 resetBtn.addEventListener('click', () => {
@@ -541,17 +573,25 @@
         // Uses the WebRTC 'bufferedamountlow' event instead of a setTimeout poll.
         // Background tabs throttle setTimeout to >=1000ms, which stalls transfers;
         // the event fires regardless of tab visibility.
-        function waitForBufferLow() {
+        // Also resolves if the channel closes or errors while waiting — the
+        // send loop's aborted() check then surfaces the failure instead of
+        // this promise hanging forever on a dead channel.
+        function waitForBufferLow(channel) {
             return new Promise(resolve => {
-                if (dc.bufferedAmount <= dc.bufferedAmountLowThreshold) {
+                if (channel.readyState !== 'open' ||
+                    channel.bufferedAmount <= channel.bufferedAmountLowThreshold) {
                     resolve();
                     return;
                 }
-                const onLow = () => {
-                    dc.removeEventListener('bufferedamountlow', onLow);
+                const done = () => {
+                    channel.removeEventListener('bufferedamountlow', done);
+                    channel.removeEventListener('close', done);
+                    channel.removeEventListener('error', done);
                     resolve();
                 };
-                dc.addEventListener('bufferedamountlow', onLow);
+                channel.addEventListener('bufferedamountlow', done);
+                channel.addEventListener('close', done);
+                channel.addEventListener('error', done);
             });
         }
         createLinkBtn.addEventListener('click', () => {
@@ -575,7 +615,8 @@
             });
             socket.on('signal', async (payload) => {
                 if (payload.type === 'answer') {
-                    await pc.setRemoteDescription(payload.sdp);
+                    // answer may belong to an already-replaced connection
+                    try { await pc.setRemoteDescription(payload.sdp); } catch { }
                 } else if (payload.type === 'ice') {
                     try { await pc.addIceCandidate(payload.candidate); } catch { }
                 }

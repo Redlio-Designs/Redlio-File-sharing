@@ -278,7 +278,15 @@
             socket.emit('join', { linkId, role: 'receiver' });
             socket.on('signal', async (payload) => {
                 if (payload.type === 'offer') {
-                    // handles both the initial offer and ICE-restart re-offers
+                    // restart:true = ICE restart on the same connection (reuse pc).
+                    // No flag = brand-new sender connection: the old pc is stale
+                    // (different DTLS session) and must be replaced, or the
+                    // handshake hangs forever on "Establishing secure connection".
+                    if (pc && !payload.restart) {
+                        try { pc.onconnectionstatechange = null; pc.close(); } catch { }
+                        pc = null;
+                        dc = null;
+                    }
                     await ensurePc();
                     await pc.setRemoteDescription(payload.sdp);
                     const answer = await pc.createAnswer();
@@ -333,6 +341,14 @@
                 try {
                     const msg = JSON.parse(data);
                     if (msg && msg.type === 'manifest') {
+                        // a fresh manifest means the sender (re)started the
+                        // transfer — drop any half-written state from before
+                        if (streamMode) {
+                            writeChains.forEach(chain => {
+                                if (chain) chain.then(w => w.abort && w.abort()).catch(() => { });
+                            });
+                        }
+                        currentIndex = -1;
                         manifest = msg;
                         filesMeta = msg.files || [];
                         totalSize = filesMeta.reduce((s, f) => s + (f.size || 0), 0);
