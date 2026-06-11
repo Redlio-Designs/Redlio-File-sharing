@@ -3,215 +3,99 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>P2P Demo — Receive Files</title>
+    <title>Redlio Relay — Receive Files</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- Added Tailwind CSS from CDN and custom fonts -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="color-scheme" content="dark">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=DM+Sans:wght@400;500;600&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
         rel="stylesheet">
-
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        'heading': ['Space Grotesk', 'sans-serif'],
-                        'body': ['DM Sans', 'sans-serif'],
-                    },
-                    colors: {
-                        primary: {
-                            50: '#ecfeff',
-                            500: '#0891b2',
-                            600: '#0e7490',
-                            700: '#155e75'
-                        },
-                        accent: {
-                            400: '#fbbf24',
-                            500: '#f59e0b'
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-
-    <style>
-        body {
-            font-family: 'DM Sans', sans-serif;
-        }
-
-        .row {
-            margin: 12px 0;
-        }
-
-        progress {
-            width: 100%;
-            height: 16px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th,
-        td {
-            border-bottom: 1px solid #eee;
-            padding: 6px 8px;
-            text-align: left;
-        }
-
-        button {
-            padding: 6px 12px;
-        }
-
-        /* Added custom animations and progress bar styling */
-        @keyframes pulse-subtle {
-
-            0%,
-            100% {
-                opacity: 1;
-            }
-
-            50% {
-                opacity: 0.8;
-            }
-        }
-
-        .animate-pulse-subtle {
-            animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-
-        .progress-bar {
-            transition: all 0.3s ease;
-        }
-
-        .status-connecting {
-            color: #f59e0b;
-        }
-
-        .status-connected {
-            color: #10b981;
-        }
-
-        .status-error {
-            color: #ef4444;
-        }
-    </style>
+    <link rel="stylesheet" href="/theme.css">
 </head>
 
-<body class="bg-slate-50 font-body text-slate-800 min-h-screen">
-    <!-- LOGO -->
-    <div class="text-center mt-6">
-        <span class="inline-block">
-            <img src="Redlio-Dark-logo.svg" alt="P2P Demo Logo" width="150" height="150" />
-        </span>
-    </div>
-    <!-- Added modern container with gradient background -->
-    <div class="min-w-4xl mx-auto min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-8 px-4">
-        <div class="max-w-4xl mx-auto">
-            <!-- Modern header with improved typography -->
-            <div class="text-center mb-8">
-                <h1 class="font-heading text-4xl font-bold text-slate-900 mb-2">Receive Files</h1>
-                <p class="text-slate-600 text-lg">Securely receive multiple files via peer-to-peer connection</p>
-            </div>
+<body>
+    <div class="atmos"></div>
+    <div class="hud-c tl"></div>
+    <div class="hud-c tr"></div>
+    <div class="hud-c bl"></div>
+    <div class="hud-c br"></div>
 
-            <!-- Connection status card with modern styling -->
-            <div class="bg-white rounded-2xl shadow-lg border border-slate-200 p-6 mb-6">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">Connection ID</label>
-                            <div class="bg-slate-100 rounded-lg p-3 font-mono text-sm">
-                                <code id="lid" class="text-primary-600 font-semibold">Loading...</code>
-                            </div>
-                        </div>
+    <main class="wrap">
+        <!-- Header -->
+        <header class="reveal d1" style="text-align:center;">
+            <img src="Redlio-Dark-logo.svg" alt="Redlio" class="logo" style="margin-bottom:22px;">
+            <div class="tag">Redlio :: P2P Relay // Downlink</div>
+            <h1 class="display">Incoming <em>Transfer</em></h1>
+            <p class="sub">Receiving directly from the sender's device. Nothing stored in between.</p>
+        </header>
 
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">Status</label>
-                            <div class="flex items-center space-x-2">
-                                <div id="statusIndicator" class="w-3 h-3 rounded-full bg-slate-400"></div>
-                                <span id="status" class="font-medium">Initializing...</span>
-                            </div>
-                        </div>
-                    </div>
+        <!-- Connection panel -->
+        <section class="panel reveal d2">
+            <div class="scan"></div>
 
-                    <!-- Enhanced overall progress section -->
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-2">Overall Progress</label>
-                            <div class="space-y-2">
-                                <div class="bg-slate-200 rounded-full h-3 overflow-hidden">
-                                    <div id="progTotal"
-                                        class="progress-bar bg-gradient-to-r from-primary-500 to-primary-600 h-full rounded-full transition-all duration-300"
-                                        style="width: 0%"></div>
-                                </div>
-                                <div class="flex justify-between text-sm text-slate-600">
-                                    <span><span id="gotBytes">0</span> bytes received</span>
-                                    <span><span id="totalBytes">0</span> bytes total</span>
-                                </div>
-                            </div>
-                        </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 24px;" class="conn-grid">
+                <div>
+                    <span class="tag field-label">Connection ID</span>
+                    <code id="lid" class="id-chip">Loading...</code>
+
+                    <div class="status-chip" style="margin-top:14px;">
+                        <span id="statusIndicator" class="dot idle"></span>
+                        <span id="status" class="status-msg st-idle">Initializing...</span>
                     </div>
                 </div>
 
-                <!-- Start gate: a user gesture is required to open the save-to-disk
-                     dialog, and it lets the user choose a download folder before the
-                     transfer begins. -->
-                <div class="mt-6">
-                    <button id="startBtn"
-                        class="w-full bg-primary-600 hover:bg-primary-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                        Start Receiving
-                    </button>
-                    <p id="modeNote" class="text-xs text-slate-500 mt-2"></p>
+                <div>
+                    <span class="tag field-label">Overall Progress</span>
+                    <div class="track" style="height:10px;">
+                        <div id="progTotal" class="progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="meter-head" style="margin-top:8px; margin-bottom:0;">
+                        <span><span class="val" id="gotBytes">0</span> received</span>
+                        <span><span id="totalBytes">0</span> total</span>
+                    </div>
                 </div>
             </div>
 
-            <!-- Modern files table with enhanced styling -->
-            <div id="filesTableWrap" class="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden"
-                style="display:none;">
-                <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
-                    <h3 class="font-heading text-lg font-semibold text-slate-900">Files</h3>
-                    <p class="text-sm text-slate-600 mt-1">Track progress and download completed files</p>
-                </div>
-
-                <div class="overflow-x-auto">
-                    <table class="w-full">
-                        <thead class="bg-slate-50 border-b border-slate-200">
-                            <tr>
-                                <th
-                                    class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                    File</th>
-                                <th
-                                    class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                    Size</th>
-                                <th
-                                    class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                    Progress</th>
-                                <th
-                                    class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                                    Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="filesTbody" class="bg-white divide-y divide-slate-200">
-                            <!-- Files will be populated here -->
-                        </tbody>
-                    </table>
-                </div>
+            <!-- Start gate: a user gesture is required to open the save-to-disk
+                 dialog, and it lets the user choose a download folder before the
+                 transfer begins. -->
+            <div class="section-gap">
+                <button id="startBtn" class="btn btn-block">Start Receiving</button>
+                <p id="modeNote" class="note"></p>
             </div>
-        </div>
+        </section>
+
+        <!-- Files table -->
+        <section id="filesTableWrap" class="panel reveal d3" style="display:none;">
+            <span class="tag field-label">Manifest // Incoming Files</span>
+            <table class="manifest">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Size</th>
+                        <th>Progress</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="filesTbody">
+                    <!-- Files will be populated here -->
+                </tbody>
+            </table>
+        </section>
+
         <!-- Footer -->
-        <div class="text-center text-muted-foreground text-sm">
-            <p class="mt-5">Made with ❤️ By <a href="https://github.com/TusharKanjariya/" target="_blank"
-                    class="text-sky-700 font-bold">Tushar
-                    Kanjariya</a> & <a href="https://github.com/kuldeep-jadeja/" class="text-sky-700 font-bold"
-                    target="_blank">Kuldeepsinh Jadeja</a>
-            </p>
-        </div>
-    </div>
+        <footer class="site reveal d4">
+            <p>Made with ❤️ by <a href="https://github.com/TusharKanjariya/" target="_blank">Tushar Kanjariya</a>
+                &amp; <a href="https://github.com/kuldeep-jadeja/" target="_blank">Kuldeepsinh Jadeja</a></p>
+        </footer>
+    </main>
+
+    <style>
+        @media (max-width: 640px) {
+            .conn-grid { grid-template-columns: 1fr !important; }
+        }
+    </style>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="/rtc-config.js"></script>
@@ -233,23 +117,49 @@
 
         let socket, pc, dc;
         let manifest = null;
-        let filesMeta = []; // {name,size,type}
+        let manifestKey = '';   // identifies the file set; same key = resumable transfer
+        let filesMeta = [];     // {name,size,type}
         let currentIndex = -1;
-        let fileReceived = []; // per-file received bytes
+        let fileReceived = [];  // per-file received bytes
         let totalSize = 0, totalReceived = 0;
 
-        // Streaming-to-disk state (File System Access API). Avoids holding the
-        // whole file in memory, so multi-GB transfers no longer crash the tab.
+        // How received bytes are persisted, picked at Start:
+        //   'fs'  — File System Access API + dedicated worker. Streams into a
+        //           user-chosen folder, off the main thread, checkpointed so a
+        //           crashed/reloaded transfer RESUMES instead of restarting.
+        //   'sw'  — service-worker streaming download (Firefox/Safari, or the
+        //           folder picker was dismissed). Bytes go straight to the
+        //           browser's download manager — disk, not RAM.
+        //   'ram' — last-resort in-memory buffering.
+        let mode = 'ram';
         let dirHandle = null;
-        let streamMode = false;
-        let writeChains = [];  // per-file promise chain: resolves to the active writable
-        // In-memory fallback (browsers without showDirectoryPicker)
-        let fileBuffers = [];  // array of arrays of Uint8Array
+        let writer = null;          // Worker (fs mode)
+        let preparedResolve = null; // pending 'prepare' reply from the worker
+        let swStreams = [];         // per-file {port, queue} (sw mode)
+        let fileBuffers = [];       // per-file chunk arrays (ram mode)
 
         const supportsFS = typeof window.showDirectoryPicker === 'function';
+
+        // Register the streaming-download service worker up front so it is
+        // controlling the page by the time a fallback is needed.
+        let swReady = false;
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw-download.js')
+                .then(() => navigator.serviceWorker.ready)
+                .then(() => {
+                    swReady = !!navigator.serviceWorker.controller;
+                    navigator.serviceWorker.addEventListener('controllerchange', () => {
+                        swReady = !!navigator.serviceWorker.controller;
+                    });
+                })
+                .catch(() => { });
+        }
+
         modeNote.textContent = supportsFS
-            ? 'Files stream straight to a folder you choose — handles very large files with low memory use.'
-            : 'This browser buffers files in memory; very large files may fail. Use Chrome or Edge for unlimited size.';
+            ? 'Files stream straight to a folder you choose — resumable and low-memory, even for huge files.'
+            : ('serviceWorker' in navigator
+                ? 'Files stream to your Downloads as they arrive — large files supported.'
+                : 'This browser buffers files in memory; very large files may fail. Use Chrome or Edge for best results.');
 
         if (!linkId) {
             setStatus('No link id in URL', 'error');
@@ -261,16 +171,33 @@
             if (supportsFS) {
                 try {
                     dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                    streamMode = true;
+                    mode = 'fs';
+                    writer = new Worker('/writer-worker.js');
+                    writer.onmessage = onWriterMessage;
+                    writer.postMessage({ op: 'init', dirHandle });
                 } catch (err) {
-                    // user dismissed the folder picker → fall back to in-memory mode
-                    streamMode = false;
+                    // user dismissed the folder picker → streaming-download fallback
+                    mode = swReady ? 'sw' : 'ram';
                 }
+            } else {
+                mode = swReady ? 'sw' : 'ram';
             }
             startBtn.disabled = true;
-            startBtn.textContent = streamMode ? 'Receiving to disk…' : 'Receiving…';
+            startBtn.textContent = mode === 'fs' ? 'Receiving to folder…'
+                : mode === 'sw' ? 'Receiving to Downloads…' : 'Receiving…';
             connect();
         });
+
+        function onWriterMessage(e) {
+            const msg = e.data;
+            if (msg.op === 'prepared') {
+                if (preparedResolve) { preparedResolve(msg.offsets); preparedResolve = null; }
+            } else if (msg.op === 'finished') {
+                setAction(msg.index, 'Saved ✓', false);
+            } else if (msg.op === 'error') {
+                setAction(msg.index, `Save failed: ${msg.message}`, true);
+            }
+        }
 
         function connect() {
             setStatus('Connecting to peer...', 'connecting');
@@ -341,63 +268,25 @@
                 try {
                     const msg = JSON.parse(data);
                     if (msg && msg.type === 'manifest') {
-                        // a fresh manifest means the sender (re)started the
-                        // transfer — drop any half-written state from before
-                        if (streamMode) {
-                            writeChains.forEach(chain => {
-                                if (chain) chain.then(w => w.abort && w.abort()).catch(() => { });
-                            });
-                        }
-                        currentIndex = -1;
-                        manifest = msg;
-                        filesMeta = msg.files || [];
-                        totalSize = filesMeta.reduce((s, f) => s + (f.size || 0), 0);
-                        totalBytesEl.textContent = formatBytes(totalSize);
-
-                        fileReceived = filesMeta.map(() => 0);
-                        writeChains = filesMeta.map(() => null);
-                        fileBuffers = filesMeta.map(() => []);
-
-                        filesTableWrap.style.display = 'block';
-                        filesTbody.innerHTML = '';
-                        filesMeta.forEach((f, i) => {
-                            const tr = document.createElement('tr');
-                            tr.className = 'hover:bg-slate-50 transition-colors';
-                            tr.innerHTML = `
-                                <td class="px-6 py-4">
-                                    <div class="flex items-center space-x-3">
-                                        <div class="flex-shrink-0">
-                                            <div class="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">
-                                                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                                </svg>
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <div class="text-sm font-medium text-slate-900">${escapeHtml(f.name)}</div>
-                                            <div class="text-sm text-slate-500">${f.type || 'Unknown type'}</div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="px-6 py-4 text-sm text-slate-900 font-medium">${formatBytes(f.size)}</td>
-                                <td class="px-6 py-4">
-                                    <div class="space-y-1">
-                                        <div class="bg-slate-200 rounded-full h-2 overflow-hidden">
-                                            <div class="progress-bar bg-gradient-to-r from-primary-500 to-primary-600 h-full rounded-full transition-all duration-300" data-idx="${i}" style="width: 0%"></div>
-                                        </div>
-                                        <div class="text-xs text-slate-500">0%</div>
-                                    </div>
-                                </td>
-                                <td class="px-6 py-4">
-                                    <span data-action="${i}" class="text-sm text-slate-400">Waiting…</span>
-                                </td>`;
-                            filesTbody.appendChild(tr);
-                        });
+                        handleManifest(msg);
                         return;
                     }
                     if (msg && msg.type === 'start') {
-                        currentIndex = msg.index;
-                        if (streamMode) startFileStream(msg.index);
+                        const i = msg.index;
+                        currentIndex = i;
+                        const offset = Math.max(0, Number(msg.offset) || 0);
+                        fileReceived[i] = offset;
+                        updateProgress(i);
+                        if (mode === 'fs') {
+                            writer.postMessage({
+                                op: 'start', index: i,
+                                name: safeName(filesMeta[i].name),
+                                size: filesMeta[i].size, offset
+                            });
+                            setAction(i, 'Saving to folder…', false);
+                        } else if (mode === 'sw') {
+                            if (!swStreams[i]) startSwStream(i);
+                        }
                         return;
                     }
                     if (msg && msg.type === 'end') {
@@ -420,40 +309,155 @@
             // binary chunk -> belongs to currentIndex
             if (!(data instanceof ArrayBuffer) || currentIndex < 0) return;
             const i = currentIndex;
-            const chunk = new Uint8Array(data);
 
             // progress (synchronous, independent of how the chunk is persisted)
-            fileReceived[i] += chunk.byteLength;
+            fileReceived[i] += data.byteLength;
             updateProgress(i);
 
-            if (streamMode) {
-                // serialize writes per file so disk I/O applies natural
-                // backpressure and chunks are never reordered or dropped
-                writeChains[i] = writeChains[i].then(writable => {
-                    return writable.write(chunk).then(() => writable);
-                });
+            if (mode === 'fs') {
+                // zero-copy hand-off; the worker serializes writes per file
+                writer.postMessage({ op: 'chunk', index: i, buffer: data }, [data]);
+            } else if (mode === 'sw') {
+                swPush(i, data);
             } else {
-                fileBuffers[i].push(chunk);
+                fileBuffers[i].push(new Uint8Array(data));
             }
         }
 
-        function startFileStream(i) {
-            // create the on-disk file and a writable stream; the chain resolves
-            // to the writable so chunk writes queue safely behind creation
-            writeChains[i] = (async () => {
-                const fh = await dirHandle.getFileHandle(safeName(filesMeta[i].name), { create: true });
-                return await fh.createWritable();
-            })();
-            setAction(i, 'Saving to disk…', false);
+        // A manifest means the sender started (or re-started after a drop).
+        // Work out what we already have, then reply with 'resume' offsets so
+        // the sender skips bytes that are already safe on this machine.
+        async function handleManifest(msg) {
+            const files = msg.files || [];
+            const key = JSON.stringify(files.map(f => [f.name, f.size]));
+            const sameTransfer = key === manifestKey && filesMeta.length > 0;
+
+            manifest = msg;
+            manifestKey = key;
+            filesMeta = files;
+            totalSize = files.reduce((s, f) => s + (f.size || 0), 0);
+            totalBytesEl.textContent = formatBytes(totalSize);
+
+            if (!sameTransfer) {
+                // different file set — drop any state from a previous transfer
+                if (mode === 'sw') {
+                    swStreams.forEach(s => { if (s && s.port) s.port.postMessage({ abort: true }); });
+                }
+                swStreams = files.map(() => null);
+                fileBuffers = files.map(() => []);
+                fileReceived = files.map(() => 0);
+                buildTable();
+            }
+            currentIndex = -1;
+
+            let offsets;
+            if (mode === 'fs') {
+                // the worker commits anything half-written, then reports the
+                // per-file byte counts actually on disk — survives page reloads
+                offsets = await new Promise(resolve => {
+                    preparedResolve = resolve;
+                    writer.postMessage({
+                        op: 'prepare',
+                        files: files.map(f => ({ name: safeName(f.name), size: f.size }))
+                    });
+                });
+            } else {
+                // sw/ram: resume from whatever arrived during this page session
+                offsets = fileReceived.slice();
+            }
+
+            fileReceived = offsets.slice();
+            files.forEach((_, i) => updateProgress(i));
+
+            if (dc && dc.readyState === 'open') {
+                dc.send(JSON.stringify({ type: 'resume', files: offsets }));
+            }
         }
 
+        function buildTable() {
+            filesTableWrap.style.display = 'block';
+            filesTbody.innerHTML = '';
+            filesMeta.forEach((f, i) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>
+                        <div class="f-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+                        <div class="f-type">${escapeHtml(f.type || 'unknown type')}</div>
+                    </td>
+                    <td><span class="f-size">${formatBytes(f.size)}</span></td>
+                    <td>
+                        <div class="track">
+                            <div class="progress-bar" data-idx="${i}" style="width: 0%"></div>
+                        </div>
+                        <div class="pct">0%</div>
+                    </td>
+                    <td>
+                        <span data-action="${i}" class="action act-wait">Waiting…</span>
+                    </td>`;
+                filesTbody.appendChild(tr);
+            });
+        }
+
+        // ---- service-worker streaming download (Firefox/Safari path) ----
+
+        function startSwStream(i) {
+            if (!navigator.serviceWorker.controller) {
+                setAction(i, 'Download unavailable — reload the page and retry', true);
+                return;
+            }
+            const s = swStreams[i] = { port: null, queue: [] };
+            const id = `${linkId}-${i}-${Math.random().toString(36).slice(2)}`;
+            const mc = new MessageChannel();
+            mc.port1.onmessage = (ev) => {
+                const m = ev.data || {};
+                if (m.type === 'ready') {
+                    // stream is registered in the SW — navigating a hidden
+                    // iframe to it starts the native download
+                    const iframe = document.createElement('iframe');
+                    iframe.hidden = true;
+                    iframe.src = `/sw-download/${id}`;
+                    document.body.appendChild(iframe);
+                    s.port = mc.port1;
+                    const queued = s.queue;
+                    s.queue = [];
+                    queued.forEach(item => postToStream(s.port, item));
+                    setAction(i, 'Downloading…', false);
+                } else if (m.type === 'cancel') {
+                    setAction(i, 'Download cancelled', true);
+                }
+            };
+            navigator.serviceWorker.controller.postMessage({
+                type: 'create', id,
+                name: safeName(filesMeta[i].name),
+                size: filesMeta[i].size
+            }, [mc.port2]);
+        }
+
+        function postToStream(port, item) {
+            if (item === 'done') port.postMessage({ done: true });
+            else port.postMessage({ chunk: item }, [item]);
+        }
+
+        function swPush(i, buffer) {
+            const s = swStreams[i];
+            if (!s) return;
+            if (!s.port) { s.queue.push(buffer); return; } // stream not ready yet
+            postToStream(s.port, buffer);
+        }
+
+        // ---- per-file completion ----
+
         function finishFile(i) {
-            if (streamMode) {
-                writeChains[i] = writeChains[i].then(async writable => {
-                    await writable.close();
-                    setAction(i, 'Saved ✓', false);
-                    return writable;
-                }).catch(() => setAction(i, 'Save failed', true));
+            if (mode === 'fs') {
+                // worker replies {op:'finished'} → "Saved ✓"
+                writer.postMessage({ op: 'finish', index: i });
+            } else if (mode === 'sw') {
+                const s = swStreams[i];
+                if (s) {
+                    if (!s.port) s.queue.push('done');
+                    else postToStream(s.port, 'done');
+                }
+                setAction(i, 'Downloaded ✓', false);
             } else {
                 // in-memory fallback: build a blob and expose a download button
                 const blob = new Blob(fileBuffers[i], { type: filesMeta[i].type || 'application/octet-stream' });
@@ -463,7 +467,7 @@
                 if (span) {
                     const btn = document.createElement('button');
                     btn.textContent = 'Download';
-                    btn.className = 'inline-flex items-center px-3 py-2 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 transition-all';
+                    btn.className = 'btn btn-small';
                     btn.onclick = () => {
                         const a = document.createElement('a');
                         a.href = url;
@@ -477,7 +481,7 @@
         }
 
         function updateProgress(i) {
-            const size = filesMeta[i].size || 0;
+            const size = filesMeta[i] ? (filesMeta[i].size || 0) : 0;
             const percentage = size ? Math.floor((fileReceived[i] / size) * 100) : 0;
             const progressBar = document.querySelector(`div[data-idx="${i}"]`);
             if (progressBar) {
@@ -495,30 +499,28 @@
             const span = document.querySelector(`span[data-action="${i}"]`);
             if (span) {
                 span.textContent = text;
-                span.className = isError ? 'text-sm text-red-500' : 'text-sm text-green-600 font-medium';
+                span.className = isError ? 'action act-err' : 'action act-ok';
             }
         }
 
         function setStatus(s, type = 'idle') {
             statusEl.textContent = s;
-            statusIndicator.className = 'w-3 h-3 rounded-full transition-all';
-
             switch (type) {
                 case 'connecting':
-                    statusIndicator.className += ' bg-accent-500 animate-pulse-subtle';
-                    statusEl.className = 'font-medium status-connecting';
+                    statusIndicator.className = 'dot wait';
+                    statusEl.className = 'status-msg st-connecting';
                     break;
                 case 'connected':
-                    statusIndicator.className += ' bg-green-500';
-                    statusEl.className = 'font-medium status-connected';
+                    statusIndicator.className = 'dot ok';
+                    statusEl.className = 'status-msg st-connected';
                     break;
                 case 'error':
-                    statusIndicator.className += ' bg-red-500';
-                    statusEl.className = 'font-medium status-error';
+                    statusIndicator.className = 'dot err';
+                    statusEl.className = 'status-msg st-error';
                     break;
                 default:
-                    statusIndicator.className += ' bg-slate-400';
-                    statusEl.className = 'font-medium text-slate-600';
+                    statusIndicator.className = 'dot idle';
+                    statusEl.className = 'status-msg st-idle';
             }
         }
 
