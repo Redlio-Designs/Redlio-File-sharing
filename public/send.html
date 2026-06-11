@@ -199,6 +199,72 @@
             }
         }
 
+        // ---- smooth wire-rate meter ----
+        // Progress used to jump once per 4 MiB read block and stall while the
+        // send buffer drained (high/low-watermark sawtooth). The meter renders
+        // at display refresh rate from plain byte counters and subtracts
+        // channel.bufferedAmount, so the bar tracks bytes actually on the
+        // wire — not bytes parked in the local send buffer. Counters are
+        // updated in the hot send loop (cheap); DOM work happens only here.
+        let perFileSent = [];
+        let meterChannel = null;
+        let meterFileIndex = -1;
+        let meterRunning = false;
+        let emaRate = 0, lastWire = -1, lastTick = 0;
+
+        function startMeter(channel) {
+            meterChannel = channel;
+            meterFileIndex = -1;
+            if (meterRunning) return;
+            meterRunning = true;
+            emaRate = 0; lastWire = -1;
+            requestAnimationFrame(meterTick);
+        }
+        // only the owner of the meter may stop it (a replaced session's
+        // cleanup must not kill the new session's meter)
+        function stopMeter(channel) {
+            if (!channel || meterChannel === channel) {
+                meterRunning = false;
+                meterChannel = null;
+            }
+        }
+
+        function meterTick(now) {
+            if (!meterRunning) return;
+            const buffered = (meterChannel && meterChannel.readyState === 'open')
+                ? meterChannel.bufferedAmount : 0;
+            const sentTotal = perFileSent.reduce((s, x) => s + x, 0);
+            const wire = Math.max(0, sentTotal - buffered);
+
+            if (lastWire < 0) { lastWire = wire; lastTick = now; }
+            const dt = (now - lastTick) / 1000;
+            if (dt > 0.1) { // ~10 Hz rate sampling, EMA-smoothed
+                const inst = (wire - lastWire) / dt;
+                emaRate = emaRate ? emaRate * 0.8 + inst * 0.2 : inst;
+                lastWire = wire; lastTick = now;
+            }
+
+            if (totalSize > 0) {
+                progressBar.style.width = `${(wire / totalSize) * 100}%`;
+                progressText.textContent =
+                    `${formatBytes(wire)} / ${formatBytes(totalSize)}` +
+                    (emaRate > 1024 ? ` · ${formatBytes(emaRate)}/s` : '');
+            }
+
+            // active file row follows the wire too
+            const i = meterFileIndex;
+            if (i >= 0 && selectedFiles[i] && selectedFiles[i].size) {
+                const f = selectedFiles[i];
+                const fileWire = Math.max(0, Math.min(perFileSent[i] - buffered, f.size));
+                const row = filesTableBody.children[i];
+                if (row) {
+                    row.children[2].querySelector('.progress-bar').style.width =
+                        `${(fileWire / f.size) * 100}%`;
+                }
+            }
+            requestAnimationFrame(meterTick);
+        }
+
         function updateFileProgress(index, progress, status) {
             fileProgress[index].progress = progress;
             fileProgress[index].status = status;
@@ -422,12 +488,13 @@
             });
 
             // Track bytes sent per file (resumed bytes count as already done)
-            let perFileSent = offsets.slice();
+            perFileSent = offsets.slice();
             totalSent = perFileSent.reduce((s, x) => s + x, 0);
 
             // Show progress elements
             overallProgress.classList.remove('hidden');
             updateOverallProgress();
+            startMeter(channel);
 
             // flow control
             // High-water mark keeps the SCTP send buffer full for max throughput;
@@ -441,60 +508,72 @@
             channel.bufferedAmountLowThreshold = low;
 
             // send each file with start/end markers, starting at its offset
-            for (let i = 0; i < selectedFiles.length; i++) {
-                const f = selectedFiles[i];
-                const startAt = offsets[i];
-                const pctOf = (off) => f.size ? Math.floor((off / f.size) * 100) : 0;
-                channel.send(JSON.stringify({
-                    type: 'start', index: i, name: f.name, size: f.size,
-                    fileType: f.type || 'application/octet-stream', offset: startAt
-                }));
+            try {
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    const f = selectedFiles[i];
+                    const startAt = offsets[i];
+                    const pctOf = (off) => f.size ? Math.floor((off / f.size) * 100) : 0;
+                    channel.send(JSON.stringify({
+                        type: 'start', index: i, name: f.name, size: f.size,
+                        fileType: f.type || 'application/octet-stream', offset: startAt
+                    }));
 
-                if (startAt >= f.size && f.size > 0) {
-                    // receiver already has the whole file from a previous run
-                    updateFileProgress(i, 100, 'completed');
-                    channel.send(JSON.stringify({ type: 'end', index: i }));
-                    continue;
-                }
-                updateFileProgress(i, pctOf(startAt), 'uploading');
-
-                let offset = startAt;
-                while (offset < f.size) {
-                    if (aborted()) {
-                        updateFileProgress(i, pctOf(offset), 'error');
-                        throw new Error(session !== sendSession
-                            ? 'connection was replaced (receiver reconnected)'
-                            : 'data channel closed');
+                    if (startAt >= f.size && f.size > 0) {
+                        // receiver already has the whole file from a previous run
+                        updateFileProgress(i, 100, 'completed');
+                        channel.send(JSON.stringify({ type: 'end', index: i }));
+                        continue;
                     }
-                    // One disk read per block, many small sends — far fewer
-                    // await round-trips than reading 64 KiB at a time.
-                    const block = await f.slice(offset, offset + readBlock).arrayBuffer();
-                    for (let o = 0; o < block.byteLength; o += chunkSize) {
+                    updateFileProgress(i, pctOf(startAt), 'uploading');
+                    meterFileIndex = i;
+
+                    // Pipelined reads: the next 4 MiB block loads from disk
+                    // while the current one drains into the channel, so there
+                    // is no stall at block boundaries.
+                    let offset = startAt;
+                    let nextBlock = f.slice(offset, offset + readBlock).arrayBuffer();
+                    while (offset < f.size) {
                         if (aborted()) {
-                            updateFileProgress(i, pctOf(offset + o), 'error');
+                            updateFileProgress(i, pctOf(offset), 'error');
                             throw new Error(session !== sendSession
                                 ? 'connection was replaced (receiver reconnected)'
                                 : 'data channel closed');
                         }
-                        channel.send(new Uint8Array(block, o, Math.min(chunkSize, block.byteLength - o)));
-                        if (channel.bufferedAmount > high) await waitForBufferLow(channel);
+                        const block = await nextBlock;
+                        const after = offset + block.byteLength;
+                        if (after < f.size) {
+                            nextBlock = f.slice(after, after + readBlock).arrayBuffer();
+                        }
+                        for (let o = 0; o < block.byteLength; o += chunkSize) {
+                            if (aborted()) {
+                                updateFileProgress(i, pctOf(offset + o), 'error');
+                                throw new Error(session !== sendSession
+                                    ? 'connection was replaced (receiver reconnected)'
+                                    : 'data channel closed');
+                            }
+                            channel.send(new Uint8Array(block, o, Math.min(chunkSize, block.byteLength - o)));
+                            // counters only — the rAF meter does all DOM work
+                            perFileSent[i] = offset + o + Math.min(chunkSize, block.byteLength - o);
+                            if (channel.bufferedAmount > high) await waitForBufferLow(channel);
+                        }
+                        offset = after;
+                        perFileSent[i] = offset;
                     }
-                    offset += block.byteLength;
 
-                    // progress once per block keeps DOM work negligible
-                    perFileSent[i] = offset;
-                    totalSent = perFileSent.reduce((s, x) => s + x, 0);
-                    updateFileProgress(i, pctOf(offset), 'uploading');
-                    updateOverallProgress();
+                    // Mark file as completed
+                    meterFileIndex = -1;
+                    updateFileProgress(i, 100, 'completed');
+                    channel.send(JSON.stringify({ type: 'end', index: i }));
                 }
-
-                // Mark file as completed
-                updateFileProgress(i, 100, 'completed');
-                channel.send(JSON.stringify({ type: 'end', index: i }));
+            } finally {
+                stopMeter(channel);
             }
 
             // all done
             channel.send(JSON.stringify({ type: 'all_done' }));
+            totalSent = totalSize;
+            updateOverallProgress();
+            progressText.textContent = `${formatBytes(totalSize)} / ${formatBytes(totalSize)}`;
             updateStatus('All files sent successfully!');
             buttonText.textContent = 'Transfer Complete';
 

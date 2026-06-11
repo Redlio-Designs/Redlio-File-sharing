@@ -277,6 +277,7 @@
                         const offset = Math.max(0, Number(msg.offset) || 0);
                         fileReceived[i] = offset;
                         updateProgress(i);
+                        startMeter();
                         if (mode === 'fs') {
                             writer.postMessage({
                                 op: 'start', index: i,
@@ -294,6 +295,8 @@
                         return;
                     }
                     if (msg && msg.type === 'all_done') {
+                        stopMeter();
+                        filesMeta.forEach((_, idx) => updateProgress(idx)); // final exact render
                         setStatus('All files received successfully!', 'connected');
                         // tell the sender exactly how many bytes we got per file
                         if (dc && dc.readyState === 'open') {
@@ -310,9 +313,10 @@
             if (!(data instanceof ArrayBuffer) || currentIndex < 0) return;
             const i = currentIndex;
 
-            // progress (synchronous, independent of how the chunk is persisted)
+            // counter only — the rAF meter does all DOM work. Updating the DOM
+            // here (per 64 KiB chunk) meant ~1000 layout writes/sec at high
+            // speed, which janked the page and made progress look erratic.
             fileReceived[i] += data.byteLength;
-            updateProgress(i);
 
             if (mode === 'fs') {
                 // zero-copy hand-off; the worker serializes writes per file
@@ -478,6 +482,48 @@
                     span.replaceWith(btn);
                 }
             }
+        }
+
+        // ---- smooth receive-rate meter ----
+        // Renders progress at display refresh rate from byte counters with an
+        // EMA-smoothed speed readout; the data-channel hot path only counts.
+        let meterOn = false, rxEma = 0, rxLast = -1, rxLastT = 0;
+
+        function startMeter() {
+            if (meterOn) return;
+            meterOn = true;
+            rxEma = 0; rxLast = -1;
+            requestAnimationFrame(meterTick);
+        }
+        function stopMeter() { meterOn = false; }
+
+        function meterTick(now) {
+            if (!meterOn) return;
+            totalReceived = fileReceived.reduce((s, x) => s + x, 0);
+
+            if (rxLast < 0) { rxLast = totalReceived; rxLastT = now; }
+            const dt = (now - rxLastT) / 1000;
+            if (dt > 0.1) { // ~10 Hz rate sampling
+                const inst = (totalReceived - rxLast) / dt;
+                rxEma = rxEma ? rxEma * 0.8 + inst * 0.2 : inst;
+                rxLast = totalReceived; rxLastT = now;
+            }
+
+            gotBytesEl.textContent = formatBytes(totalReceived) +
+                (rxEma > 1024 ? ` · ${formatBytes(rxEma)}/s` : '');
+            progTotal.style.width = `${totalSize ? (totalReceived / totalSize) * 100 : 0}%`;
+
+            const i = currentIndex;
+            if (i >= 0 && filesMeta[i]) {
+                const size = filesMeta[i].size || 0;
+                const bar = document.querySelector(`div[data-idx="${i}"]`);
+                if (bar) {
+                    bar.style.width = `${size ? (fileReceived[i] / size) * 100 : 0}%`;
+                    const pctText = bar.parentElement.nextElementSibling;
+                    if (pctText) pctText.textContent = `${size ? Math.floor((fileReceived[i] / size) * 100) : 0}%`;
+                }
+            }
+            requestAnimationFrame(meterTick);
         }
 
         function updateProgress(i) {
